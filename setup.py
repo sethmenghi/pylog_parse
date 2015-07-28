@@ -16,10 +16,18 @@ with open('HISTORY.rst') as history_file:
 
 requirements = [
     # TODO: put package requirements here
+    'numpy>=1.9.0',
+    'pandas>=0.16.0',
+    'IPython>=3.1.0',
+    'sqlalchemy>=0.9.9'
 ]
 
 test_requirements = [
     # TODO: put package test requirements here
+    'numpy>=1.9.0',
+    'pandas>=0.16.0',
+    'IPython>=3.1.0',
+    'sqlalchemy>=0.9.9'
 ]
 
 setup(

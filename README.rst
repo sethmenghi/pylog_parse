@@ -22,6 +22,8 @@ Installation
 
 .. code-block:: bash
 
+    $ pip install pandas
+    $ pip install sqlalchemy
     $ python setup.py install
 
 
@@ -31,6 +33,12 @@ Example
 * To execute you may copy this script and input your own information
 * Eventually command line arguments will be put in the place of manually
   creating a script
+
+* After creating a script like the one below and saving as example.py:
+
+.. code-block:: bash
+
+  $ python example.py
 
 
 .. code-block:: python
