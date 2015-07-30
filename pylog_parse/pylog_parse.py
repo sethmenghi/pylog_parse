@@ -58,6 +58,8 @@ class LogFile(object):
     """Parses a logfile into a pandas dataframe."""
 
     df = None
+    regex = None
+    headers = None
     _apache_headers = ['server', 'ip', 'rfc1413', 'userid', 'timestamp',
                        'request', 'status', 'size', 'referer', 'useragent',
                        'requestid']
@@ -66,6 +68,14 @@ class LogFile(object):
     _apache_regex = re.compile((r'^(\S+) (\S+) (\S+) (\S+) (\S+) ' +
                                 r'("?:\\"|.*?") (\S+) (\S+) ' +
                                 r'("?:\\"|.*?") ("?:\\"|.*?") (\S+)'))
+    _elblogs_headers = ['timestamp', 'elb', 'clientip', 'backendip',
+                        'request_processing_time', 'backend_processing_time'
+                        'response_processing_time', 'elb_status_code',
+                        'backend_status_code', 'received_bytes', 'sent_bytes',
+                        'request', 'user_agent']
+    _elblogs_regex = re.compile((r'^(\S+) (\S+) (\S+):\S+ (\S+):\S+ (\S+) ' +
+                                 r'(\S+) (\S+) (\S+) (\S+) (\S+) (\S+) ' +
+                                 r'("?.*?")'))
 
     def __init__(self, path, log_type='apache', date_cols=None):
         """Initialize the LogFile object.
@@ -80,43 +90,67 @@ class LogFile(object):
         self.filename = os.path.basename(os.path.splitext(path)[0])
         self.date_cols = date_cols
         self.log_type = log_type
+        self._assign_regex()
 
-    def _load_apache_log(self, path, headers=None):
-        logger.info('Loading Apache Log - {path}'.format(path=path))
+    def _assign_regex(self):
+        if self.log_type == 'apache':
+            self.regex = self._apache_regex
+            self.headers = self._apache_headers
+        elif self.log_type == 'elblogs':
+            self.regex = self._elblogs_regex
+            self.headers = self._elblogs_headers
+
+    def __repr__(self):
+        """Non printed representation of LogFile."""
+        return "<LogFile len:%s type:%s path:%s>" % (str(len(self.df)),
+                                                     self.log_type,
+                                                     self.path)
+
+    def __str__(self):
+        """String representation of LogFile."""
+        return self.df
+
+    @property
+    def get_data(self):
+        """Return processed dataframe of LogFile."""
+        if self.df is None:
+            self.df = self._load_path(self.path)
+        return self.df
+
+    def _load_log(self, path):
         data = []
+        logger.info('Loading Apache Log - {path}'.format(path=path))
         for i, line in enumerate(open(path)):
-            for match in re.finditer(self._apache_regex, line):
-                row = []
-                for i, group in enumerate(match.groups()):
-                    row.append(group)
+            for match in re.finditer(self.regex, line):
+                row = [g for g in match.groups()]
                 data.append(row)
         df = pd.DataFrame(data, index=range(0, len(data)))
-        df.columns = self._apache_headers
+        df.columns = self.headers
+        return df
+
+    def _load_directory(self, path):
+        dfs = None
+        for f in list_directory_files(path):
+            df = self._load_path(f)
+            dfs.append(df)
+            df = pd.concat(dfs, axis=0, ignore_index=True)
         return df
 
     def _load_path(self, path):
         logger.info('Loading Path - {path}'.format(path=path))
-        dfs = []
         file_ext = os.path.splitext(path)[1]
-        df = pd.DataFrame()
         # unzip file and load contents
         if file_ext == '.zip' or 'gz' in file_ext:
             extracted_path = unzip(path, file_ext)
-            for f in list_directory_files(extracted_path):
-                df = self._load_path(f)
-                dfs.append(df)
+            df = self._load_directory(extracted_path)
         # Recursively hit all files in directory
         elif file_ext == '':
-            for f in list_directory_files(path):
-                df = self._load_path(f)
-                dfs.append(df)
+            df = self._load_directory(path)
         # Hit the log file! Process it.
         elif file_ext == '.log':
-            if self.log_type == 'apache':
-                df = self._load_apache_log(path)
-        # Concat dataframes from zipfiles or directories
-        if len(dfs) > 0:
-            df = pd.concat(dfs, axis=0, ignore_index=True)
+            df = self._load_log(path)
+        else:
+            df = pd.DataFrame()
         return df
 
     def upload(self, engine, table=None, headers=None):
