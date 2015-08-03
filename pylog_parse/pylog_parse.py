@@ -8,12 +8,13 @@ import tarfile
 import logging
 
 import pandas as pd
+import psycopg2
 
 
 logger = logging.Logger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
+ch.setLevel(logging.DEBUG)
 logger.addHandler(ch)
 
 
@@ -48,9 +49,8 @@ def list_directory_files(path):
     """Yield all filenames in a path."""
     for f in os.listdir(path):
         current_path = os.path.join(path, f)
-        if os.path.isfile(current_path):
-            if f[0] != '.' and os.path.getsize(current_path) != 0:
-                yield current_path
+        if f[0] != '.' and os.path.getsize(current_path) != 0:
+            yield current_path
 
 
 class LogFile(object):
@@ -60,6 +60,7 @@ class LogFile(object):
     df = None
     regex = None
     headers = None
+    types = None
     _apache_headers = ['server', 'ip', 'rfc1413', 'userid', 'timestamp',
                        'request', 'status', 'size', 'referer', 'useragent',
                        'requestid']
@@ -68,16 +69,25 @@ class LogFile(object):
     _apache_regex = re.compile((r'^(\S+) (\S+) (\S+) (\S+) (\S+) ' +
                                 r'("?:\\"|.*?") (\S+) (\S+) ' +
                                 r'("?:\\"|.*?") ("?:\\"|.*?") (\S+)'))
+    _elblogs_types = {'timestamp': 'timestamp', 'text': 'elb',
+                      'cidr': 'clientip', 'cidr': 'backendip',
+                      'time': 'request_processing_time',
+                      'time': 'backend_processing_time',
+                      'time': 'response_processing_time',
+                      'numeric': 'elb_status_code',
+                      'numeric': 'backend_status_code',
+                      'numeric': 'received_bytes', 'numeric': 'sent_bytes',
+                      'text': 'request', 'text': 'user_agent'}
     _elblogs_headers = ['timestamp', 'elb', 'clientip', 'backendip',
-                        'request_processing_time', 'backend_processing_time'
+                        'request_processing_time', 'backend_processing_time',
                         'response_processing_time', 'elb_status_code',
                         'backend_status_code', 'received_bytes', 'sent_bytes',
                         'request', 'user_agent']
     _elblogs_regex = re.compile((r'^(\S+) (\S+) (\S+):\S+ (\S+):\S+ (\S+) ' +
                                  r'(\S+) (\S+) (\S+) (\S+) (\S+) (\S+) ' +
-                                 r'("?.*?")'))
+                                 r'("?.*?") ?(?:(.*))'))
 
-    def __init__(self, path, log_type='apache', date_cols=None):
+    def __init__(self, path, log_type='apache', encoding='utf-8'):
         """Initialize the LogFile object.
 
         Args:
@@ -88,30 +98,23 @@ class LogFile(object):
         self.path = path
         self.file_ext = os.path.splitext(path)[1]
         self.filename = os.path.basename(os.path.splitext(path)[0])
-        self.date_cols = date_cols
         self.log_type = log_type
+        self.encoding = encoding
         self._assign_regex()
+        self.df = self._load_path(path)
 
     def _assign_regex(self):
         if self.log_type == 'apache':
             self.regex = self._apache_regex
             self.headers = self._apache_headers
+            self.types = self._apache_types
         elif self.log_type == 'elblogs':
             self.regex = self._elblogs_regex
             self.headers = self._elblogs_headers
-
-    def __repr__(self):
-        """Non printed representation of LogFile."""
-        return "<LogFile len:%s type:%s path:%s>" % (str(len(self.df)),
-                                                     self.log_type,
-                                                     self.path)
-
-    def __str__(self):
-        """String representation of LogFile."""
-        return self.df
+            self.types = self._elblogs_types
 
     @property
-    def get_data(self):
+    def data(self):
         """Return processed dataframe of LogFile."""
         if self.df is None:
             self.df = self._load_path(self.path)
@@ -129,15 +132,16 @@ class LogFile(object):
         return df
 
     def _load_directory(self, path):
-        dfs = None
+        dfs = []
+        df = pd.DataFrame()
         for f in list_directory_files(path):
             df = self._load_path(f)
             dfs.append(df)
-            df = pd.concat(dfs, axis=0, ignore_index=True)
+        df = pd.concat(dfs, axis=0, ignore_index=True)
         return df
 
     def _load_path(self, path):
-        logger.info('Loading Path - {path}'.format(path=path))
+        logger.debug('Loading Path - {path}'.format(path=path))
         file_ext = os.path.splitext(path)[1]
         # unzip file and load contents
         if file_ext == '.zip' or 'gz' in file_ext:
@@ -153,7 +157,15 @@ class LogFile(object):
             df = pd.DataFrame()
         return df
 
-    def upload(self, engine, table=None, headers=None):
+    def to_csv(self, path):
+        """Output apache log to file as csv."""
+        if self.df is None:
+            self.df = self._load_path(self.path)
+        if os.path.isdir(path):
+            path = path[0:-1] + '.csv'
+        self.df.to_csv(path, index=False)
+
+    def to_sql(self, engine, table=None, headers=None):
         """Upload the logfile to the table.
 
         Args:
@@ -168,10 +180,14 @@ class LogFile(object):
         if table is None:
             table = self.filename
         logger.info('Uploading: {t} - {l}'.format(t=table, l=len(self.df)))
-        self.df.to_sql(table, con=engine, if_exists='append', index=False)
-
-    def to_csv(self, output):
-        """Output apache log to file as csv."""
-        if self.df is None:
-            self.df = self._load_path(self.path)
-        self.df.to_csv(output, index=False)
+        try:
+            self.df.to_sql(table, con=engine, if_exists='append',
+                           index=False)
+        except psycopg2.DataError, e:
+            logger.info(e)
+            engine.execute("SET client_encoding TO 'latin_1'")
+            self.df.to_sql(table, con=engine, if_exists='append',
+                           index=False)
+        # except Exception, e:
+        #     logger.info(e)
+        #     self.to_csv(self.path)

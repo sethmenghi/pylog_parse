@@ -44,6 +44,7 @@ setup(
     package_dir={'pylog_parse':
                  'pylog_parse'},
     include_package_data=True,
+    scripts=['bin/pylog'],
     install_requires=requirements,
     license="BSD",
     zip_safe=False,
