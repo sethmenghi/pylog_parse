@@ -8,7 +8,6 @@ import tarfile
 import logging
 
 import pandas as pd
-import psycopg2
 
 
 logger = logging.Logger(__name__)
@@ -87,7 +86,7 @@ class LogFile(object):
                                  r'(\S+) (\S+) (\S+) (\S+) (\S+) (\S+) ' +
                                  r'("?.*?") ?(?:(.*))'))
 
-    def __init__(self, path, log_type='apache', encoding='utf-8'):
+    def __init__(self, path, log_type):
         """Initialize the LogFile object.
 
         Args:
@@ -99,9 +98,9 @@ class LogFile(object):
         self.file_ext = os.path.splitext(path)[1]
         self.filename = os.path.basename(os.path.splitext(path)[0])
         self.log_type = log_type
-        self.encoding = encoding
         self._assign_regex()
-        self.df = self._load_path(path)
+        # self.df = self._load_path(path)
+        # self.encoding = encoding
 
     def _assign_regex(self):
         if self.log_type == 'apache':
@@ -120,7 +119,7 @@ class LogFile(object):
             self.df = self._load_path(self.path)
         return self.df
 
-    def _load_log(self, path):
+    def _load_log(self, path, engine=None, table=None):
         data = []
         logger.info('Loading Apache Log - {path}'.format(path=path))
         for i, line in enumerate(open(path)):
@@ -131,7 +130,7 @@ class LogFile(object):
         df.columns = self.headers
         return df
 
-    def _load_directory(self, path):
+    def _load_directory(self, path, engine=None, table=None):
         dfs = []
         df = pd.DataFrame()
         for f in list_directory_files(path):
@@ -140,7 +139,7 @@ class LogFile(object):
         df = pd.concat(dfs, axis=0, ignore_index=True)
         return df
 
-    def _load_path(self, path):
+    def _load_path(self, path, engine=None, table=None):
         logger.debug('Loading Path - {path}'.format(path=path))
         file_ext = os.path.splitext(path)[1]
         # unzip file and load contents
@@ -176,18 +175,23 @@ class LogFile(object):
                 if no file headers will check database tablename
         """
         if self.df is None:
-            self.df = self._load_path(self.path)
+            self.df = self._load_path(self.path, engine, table)
         if table is None:
+            if self.log_type == 'apache':
+                table = 'apachelogs'
+            elif self.log_type == 'elblogs':
+                table = 'elblogs'
             table = self.filename
         logger.info('Uploading: {t} - {l}'.format(t=table, l=len(self.df)))
         try:
-            self.df.to_sql(table, con=engine, if_exists='append',
-                           index=False)
-        except psycopg2.DataError, e:
-            logger.info(e)
             engine.execute("SET client_encoding TO 'latin_1'")
+        except Exception, e:
+            logger.info(e)
+            pass
+        try:
+            logger.info("Upload: {f} -> {t}".format(f=self.filename, t=table))
             self.df.to_sql(table, con=engine, if_exists='append',
-                           index=False)
-        # except Exception, e:
-        #     logger.info(e)
-        #     self.to_csv(self.path)
+                           index=False, chunksize=1000)
+        except Exception, e:
+            logger.info(e)
+            raise(e)
