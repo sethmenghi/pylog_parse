@@ -6,8 +6,11 @@ import errno
 import zipfile
 import tarfile
 import logging
+import traceback
+import csv
 
 import pandas as pd
+import datetime
 
 
 logger = logging.Logger(__name__)
@@ -57,6 +60,8 @@ class LogFile(object):
     """Parses a logfile into a pandas dataframe."""
 
     df = None
+    length = 0
+    path_length = 0
     regex = None
     headers = None
     types = None
@@ -121,26 +126,39 @@ class LogFile(object):
 
     def _load_log(self, path, engine=None, table=None):
         data = []
-        logger.info('Loading Apache Log - {path}'.format(path=path))
+        # logger.debug('Loading Apache Log - {path}'.format(path=path))
         for i, line in enumerate(open(path)):
             for match in re.finditer(self.regex, line):
                 row = [g for g in match.groups()]
                 data.append(row)
         df = pd.DataFrame(data, index=range(0, len(data)))
+	logger.info('Length: {l} \t {path}'.format(l=len(df), path=path))
+	self.length += len(df)
         df.columns = self.headers
         return df
 
-    def _load_directory(self, path, engine=None, table=None):
-        dfs = []
-        df = pd.DataFrame()
+    def _load_directory(self, path, engine=None, table=None, csv_path=None):
+	dfs = []
         for f in list_directory_files(path):
-            df = self._load_path(f)
-            dfs.append(df)
-        df = pd.concat(dfs, axis=0, ignore_index=True)
+	    df = self._load_path(f)
+	    if csv_path:
+		if os.path.exists(csv_path):
+	 	    with open(csv_path, 'a') as f:
+			df.to_csv(csv_path, sep=',', quoting=csv.QUOTE_NONNUMERIC, 
+			          na_rep='NULL', index=False)
+		else:
+		    df.to_csv(csv_path, mode='wb', sep=',', quoting=csv.QUOTE_NONNUMERIC,
+                              na_rep='NULL', index=False)
+	    else:
+		dfs.append(df)
+	if len(dfs) > 0:
+            df = pd.concat(dfs, axis=0, ignore_index=True)
+	else:
+	    df = None
         return df
 
-    def _load_path(self, path, engine=None, table=None):
-        logger.debug('Loading Path - {path}'.format(path=path))
+    def _load_path(self, path, engine=None, table=None, csv_path=None):
+        # logger.debug('Loading Path - {path}'.format(path=path))
         file_ext = os.path.splitext(path)[1]
         # unzip file and load contents
         if file_ext == '.zip' or 'gz' in file_ext:
@@ -148,21 +166,49 @@ class LogFile(object):
             df = self._load_directory(extracted_path)
         # Recursively hit all files in directory
         elif file_ext == '':
-            df = self._load_directory(path)
+            df = self._load_directory(path, csv_path=csv_path)
         # Hit the log file! Process it.
         elif file_ext == '.log':
             df = self._load_log(path)
+	    self.path_length += len(df)
         else:
             df = pd.DataFrame()
-        return df
+	return df
 
-    def to_csv(self, path):
+    def to_csv(self, path, copy=False, con=None):
         """Output apache log to file as csv."""
         if self.df is None:
-            self.df = self._load_path(self.path)
-        if os.path.isdir(path):
-            path = path[0:-1] + '.csv'
-        self.df.to_csv(path, index=False)
+            self.df = self._load_path(self.path, csv_path=path)
+	    logger.info('TotalLength: {l}, PathLength {pl} \t {path}'.format(l=self.length, pl=self.path_length, path=path))
+        #  self.df.to_csv(path, mode='wb', sep=',', quoting=csv.QUOTE_NONNUMERIC, na_rep='NULL', index=False)
+	if copy:
+	    if not con:
+		raise Exception('Need psycopg2 connection')
+	    try:
+		conn = con
+		cur = conn.cursor()
+		copy_sql = """
+           		COPY elblogs FROM stdin WITH
+			NULL AS 'NULL'
+			CSV HEADER
+           		DELIMITER as ','
+          	        """
+		with open(path, 'r') as f:
+		    cur.execute("SET CLIENT_ENCODING TO 'latin1'")
+		    logger.info('COPY {p} -> db'.format(p=path))
+    		    cur.copy_expert(sql=copy_sql, file=f)
+    		    conn.commit()
+    		    cur.close()
+		    del self.df
+	    except Exception, e:
+		del self.df
+		if cur:
+		    cur.close()
+		logger.info(traceback.format_exc())
+		logger.info(e)
+		if os.path.exists(path):
+		    logger.info('Removing {p}'.format(p=path))
+		    os.remove(path)
 
     def to_sql(self, engine, table=None, headers=None):
         """Upload the logfile to the table.

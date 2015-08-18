@@ -3,11 +3,17 @@ from __future__ import absolute_import
 import os
 from os.path import isfile, getsize
 import logging
+import re
 
 import luigi
-# import sqlalchemy
+import psycopg2
+import pandas as pd
 
-from .pylog_parse import LogFile
+# import sqlalchemy
+try:
+	from .pylog_parse import LogFile
+except:
+	from pylog_parse import LogFile
 
 logger = logging.getLogger(__name__)
 
@@ -17,18 +23,15 @@ class LogTask(luigi.Task):
 
     path = luigi.Parameter()
     logtype = luigi.Parameter()
-
     _conf = luigi.configuration.get_config()
     _conf.reload()
 
-    _user = _conf.get('postgres', 'user')
     _password = _conf.get('postgres', 'password')
     _host = _conf.get('postgres', 'host')
     _port = _conf.get('postgres', 'port')
     _database = _conf.get('pylog', 'database')
-
-    _url = """postgresql://{u}:{p}@{h}:{port}/{db}
-           """.format(u=_user, p=_port, h=_host,
+    _user = _conf.get('postgres', 'user')
+    _url = """postgresql://{u}:{p}@{h}:{port}/{db}""".format(u=_user, p=_password, h=_host,
                       port=_port, db=_database)
 
     @property
@@ -82,22 +85,22 @@ class UploadLogs(LogTask):
         return CheckLogPath(path=self.path)
 
     def output(self):
-        csv = os.path.splitext(self.path)[0]
-        if os.path.isdir(self.path):
-            csv = self.path[0:-1] + '.csv'
-        csv = csv + '.csv'
+	groups = re.search(r'2015.(\d{2}).(\d{2})', self.path).groups()
+        csv = '/home/ubuntu/elb/2015-{m}-{d}.csv'.format(m=groups[0], d=groups[1])
         return luigi.LocalTarget(path=csv)
 
     def run(self):
+	conn = psycopg2.connect(self.url)
         log = LogFile(path=self.path, log_type=self.logtype)
-        log.to_csv(self.output().path)
-
+	cursor = conn.cursor()
+	cursor.close()
+	log.to_csv(self.output().path, con=conn, copy=True)
+	if os.path.exists(self.output().path):
+	    df = pd.read_csv(self.output().path, nrows=2, header=0)
+	    os.remove(self.output().path)
+	    df.to_csv(self.output().path, index=False) # Only keep head of csv
 
 class LogPaths(LogTask):
-    run = NotImplemented
-
-    def complete(self):
-        return False
 
     def requires(self):
         log_files = [f for f in get_sublogs(self.path)]
@@ -116,3 +119,11 @@ class LogPaths(LogTask):
                 yield UploadLogs(path=fold, logtype=self.logtype)
         for f in log_files:
             yield UploadLogs(path=f, logtype=self.logtype)
+
+    def run(self):
+	for f in self.input():
+		logger.info(f.path)
+
+
+if __name__ == '__main__':
+	luigi.run()
