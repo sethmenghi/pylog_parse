@@ -132,29 +132,31 @@ class LogFile(object):
                 row = [g for g in match.groups()]
                 data.append(row)
         df = pd.DataFrame(data, index=range(0, len(data)))
-	logger.info('Length: {l} \t {path}'.format(l=len(df), path=path))
-	self.length += len(df)
+        logger.info('Length: {l} \t {path}'.format(l=len(df), path=path))
+        self.length += len(df)
         df.columns = self.headers
         return df
 
     def _load_directory(self, path, engine=None, table=None, csv_path=None):
-	dfs = []
+        dfs = []
         for f in list_directory_files(path):
-	    df = self._load_path(f)
-	    if csv_path:
-		if os.path.exists(csv_path):
-	 	    with open(csv_path, 'a') as f:
-			df.to_csv(csv_path, sep=',', quoting=csv.QUOTE_NONNUMERIC, 
-			          na_rep='NULL', index=False)
-		else:
-		    df.to_csv(csv_path, mode='wb', sep=',', quoting=csv.QUOTE_NONNUMERIC,
+            df = self._load_path(f)
+            if csv_path:
+                if os.path.exists(csv_path):
+                    with open(csv_path, 'a') as f:
+                        df.to_csv(csv_path, sep=',',
+                                  quoting=csv.QUOTE_NONNUMERIC,
+                                  na_rep='NULL', index=False)
+                else:
+                    df.to_csv(csv_path, mode='wb', sep=',',
+                              quoting=csv.QUOTE_NONNUMERIC,
                               na_rep='NULL', index=False)
-	    else:
-		dfs.append(df)
-	if len(dfs) > 0:
+            else:
+                dfs.append(df)
+        if len(dfs) > 0:
             df = pd.concat(dfs, axis=0, ignore_index=True)
-	else:
-	    df = None
+        else:
+            df = None
         return df
 
     def _load_path(self, path, engine=None, table=None, csv_path=None):
@@ -170,45 +172,45 @@ class LogFile(object):
         # Hit the log file! Process it.
         elif file_ext == '.log':
             df = self._load_log(path)
-	    self.path_length += len(df)
+            self.path_length += len(df)
         else:
             df = pd.DataFrame()
-	return df
+        return df
 
     def to_csv(self, path, copy=False, con=None):
         """Output apache log to file as csv."""
         if self.df is None:
             self.df = self._load_path(self.path, csv_path=path)
-	    logger.info('TotalLength: {l}, PathLength {pl} \t {path}'.format(l=self.length, pl=self.path_length, path=path))
+        logger.info('TotalLength: {l}, PathLength {pl} \t {path}'.format(l=self.length, pl=self.path_length, path=path))
         #  self.df.to_csv(path, mode='wb', sep=',', quoting=csv.QUOTE_NONNUMERIC, na_rep='NULL', index=False)
-	if copy:
-	    if not con:
-		raise Exception('Need psycopg2 connection')
-	    try:
-		conn = con
-		cur = conn.cursor()
-		copy_sql = """
-           		COPY elblogs FROM stdin WITH
-			NULL AS 'NULL'
-			CSV HEADER
-           		DELIMITER as ','
-          	        """
-		with open(path, 'r') as f:
-		    cur.execute("SET CLIENT_ENCODING TO 'latin1'")
-		    logger.info('COPY {p} -> db'.format(p=path))
-    		    cur.copy_expert(sql=copy_sql, file=f)
-    		    conn.commit()
-    		    cur.close()
-		    del self.df
-	    except Exception, e:
-		del self.df
-		if cur:
-		    cur.close()
-		logger.info(traceback.format_exc())
-		logger.info(e)
-		if os.path.exists(path):
-		    logger.info('Removing {p}'.format(p=path))
-		    os.remove(path)
+        if copy:
+            if not con:
+                raise Exception('Need psycopg2 connection')
+            try:
+                conn = con
+                cur = conn.cursor()
+                copy_sql = """
+                    COPY elblogs FROM stdin WITH
+                    NULL AS 'NULL'
+                    CSV HEADER
+                    DELIMITER as ','
+                 """
+                with open(path, 'r') as f:
+                    cur.execute("SET CLIENT_ENCODING TO 'latin1'")
+                    logger.info('COPY {p} -> db'.format(p=path))
+                    cur.copy_expert(sql=copy_sql, file=f)
+                    conn.commit()
+                    cur.close()
+                del self.df
+            except Exception, e:
+                del self.df
+                if cur:
+                    cur.close()
+                logger.info(traceback.format_exc())
+                logger.info(e)
+                if os.path.exists(path):
+                    logger.info('Removing {p}'.format(p=path))
+                    os.remove(path)
 
     def to_sql(self, engine, table=None, headers=None):
         """Upload the logfile to the table.

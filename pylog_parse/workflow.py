@@ -11,11 +11,12 @@ import pandas as pd
 
 # import sqlalchemy
 try:
-	from .pylog_parse import LogFile
+    from .pylog_parse import LogFile
 except:
-	from pylog_parse import LogFile
+    from pylog_parse import LogFile
 
 logger = logging.getLogger(__name__)
+
 
 class LogTask(luigi.Task):
 
@@ -32,7 +33,7 @@ class LogTask(luigi.Task):
     _database = _conf.get('pylog', 'database')
     _user = _conf.get('postgres', 'user')
     _url = """postgresql://{u}:{p}@{h}:{port}/{db}""".format(u=_user, p=_password, h=_host,
-                      port=_port, db=_database)
+                                                             port=_port, db=_database)
 
     @property
     def url(self):
@@ -59,11 +60,13 @@ def list_directory_files(path, folders=False):
             if file_ext == '' or file_ext == '/':
                 yield current_path
 
+
 def get_subfolders(path):
     for f in list_directory_files(path, folders=True):
         file_ext = os.path.splitext(f)[1]
         if file_ext == ''or file_ext == '/':
             yield f
+
 
 def get_sublogs(path):
     for f in list_directory_files(path):
@@ -85,20 +88,22 @@ class UploadLogs(LogTask):
         return CheckLogPath(path=self.path)
 
     def output(self):
-	groups = re.search(r'2015.(\d{2}).(\d{2})', self.path).groups()
-        csv = '/home/ubuntu/elb/2015-{m}-{d}.csv'.format(m=groups[0], d=groups[1])
+        groups = re.search(r'2015.(\d{2}).(\d{2})', self.path).groups()
+        csv = '/home/ubuntu/elb/2015-{m}-{d}.csv'.format(m=groups[0],
+                                                         d=groups[1])
         return luigi.LocalTarget(path=csv)
 
     def run(self):
-	conn = psycopg2.connect(self.url)
+        conn = psycopg2.connect(self.url)
         log = LogFile(path=self.path, log_type=self.logtype)
-	cursor = conn.cursor()
-	cursor.close()
-	log.to_csv(self.output().path, con=conn, copy=True)
-	if os.path.exists(self.output().path):
-	    df = pd.read_csv(self.output().path, nrows=2, header=0)
-	    os.remove(self.output().path)
-	    df.to_csv(self.output().path, index=False) # Only keep head of csv
+        cursor = conn.cursor()
+        cursor.close()
+        log.to_csv(self.output().path, con=conn, copy=True)
+        if os.path.exists(self.output().path):
+            df = pd.DataFrame({'length': log.length}, index=[0])
+            os.remove(self.output().path)
+            df.to_csv(self.output().path, index=False)  # Only keep head of csv
+
 
 class LogPaths(LogTask):
 
@@ -121,9 +126,9 @@ class LogPaths(LogTask):
             yield UploadLogs(path=f, logtype=self.logtype)
 
     def run(self):
-	for f in self.input():
-		logger.info(f.path)
+        for f in self.input():
+            logger.info(f.path)
 
 
 if __name__ == '__main__':
-	luigi.run()
+    luigi.run()
