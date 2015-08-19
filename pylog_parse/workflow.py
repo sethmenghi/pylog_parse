@@ -32,11 +32,15 @@ class LogTask(luigi.Task):
     _port = _conf.get('postgres', 'port')
     _database = _conf.get('pylog', 'database')
     _user = _conf.get('postgres', 'user')
-    _url = """postgresql://{u}:{p}@{h}:{port}/{db}""".format(u=_user, p=_password, h=_host,
-                                                             port=_port, db=_database)
+    _url = """postgresql://{u}:{p}@{h}:{port}/{db}""".format(u=_user,
+                                                             p=_password,
+                                                             h=_host,
+                                                             port=_port,
+                                                             db=_database)
 
     @property
     def url(self):
+        """Postgresql url property."""
         return self._url
 
 
@@ -89,8 +93,8 @@ class UploadLogs(LogTask):
 
     def output(self):
         groups = re.search(r'2015.(\d{2}).(\d{2})', self.path).groups()
-        csv = '/home/ubuntu/elb/2015-{m}-{d}.csv'.format(m=groups[0],
-                                                         d=groups[1])
+        csv = '/home/ubuntu/elb2/2015-{m}-{d}.csv'.format(m=groups[0],
+                                                          d=groups[1])
         return luigi.LocalTarget(path=csv)
 
     def run(self):
@@ -110,9 +114,9 @@ class LogPaths(LogTask):
     def requires(self):
         log_files = [f for f in get_sublogs(self.path)]
         subfolders = [f for f in get_subfolders(self.path)]
-        logger.info('Path: {p}'.format(p=self.path))
-        logger.info('Subfolders: {s}'.format(s=subfolders))
-        logger.info('Subfiles: {f}'.format(f=log_files))
+        logger.debug('Path: {p}'.format(p=self.path))
+        logger.debug('Subfolders: {s}'.format(s=subfolders))
+        logger.debug('Subfiles: {f}'.format(f=log_files))
 
         for fold in subfolders:
             sub = [f for f in get_subfolders(fold)]
@@ -126,9 +130,10 @@ class LogPaths(LogTask):
             yield UploadLogs(path=f, logtype=self.logtype)
 
     def run(self):
+        total_length = 0
         for f in self.input():
-            logger.info(f.path)
-
+            total_length = total_length + pd.read_csv(f.path()).iloc[0][0]
+        logger.info('AllFilesLength: {l}'.format(l=total_length))
 
 if __name__ == '__main__':
     luigi.run()

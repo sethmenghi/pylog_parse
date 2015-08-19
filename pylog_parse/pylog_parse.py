@@ -61,7 +61,7 @@ class LogFile(object):
 
     df = None
     length = 0
-    path_length = 0
+    path_length = 0  # For testing, assert(length == path_length)
     regex = None
     headers = None
     types = None
@@ -132,7 +132,7 @@ class LogFile(object):
                 row = [g for g in match.groups()]
                 data.append(row)
         df = pd.DataFrame(data, index=range(0, len(data)))
-        logger.info('Length: {l} \t {path}'.format(l=len(df), path=path))
+        # logger.debug('Length: {l} \t {path}'.format(l=len(df), path=path))
         self.length += len(df)
         df.columns = self.headers
         return df
@@ -181,8 +181,9 @@ class LogFile(object):
         """Output apache log to file as csv."""
         if self.df is None:
             self.df = self._load_path(self.path, csv_path=path)
-        logger.info('TotalLength: {l}, PathLength {pl} \t {path}'.format(l=self.length, pl=self.path_length, path=path))
-        #  self.df.to_csv(path, mode='wb', sep=',', quoting=csv.QUOTE_NONNUMERIC, na_rep='NULL', index=False)
+            del self.df
+        logger.info("""File: {path}\tLength: {l}""".format(l=self.length,
+                                                           path=path))
         if copy:
             if not con:
                 raise Exception('Need psycopg2 connection')
@@ -197,7 +198,7 @@ class LogFile(object):
                  """
                 with open(path, 'r') as f:
                     cur.execute("SET CLIENT_ENCODING TO 'latin1'")
-                    logger.info('COPY {p} -> db'.format(p=path))
+                    logger.info('COPY {p} -> ijreview.elblogs'.format(p=path))
                     cur.copy_expert(sql=copy_sql, file=f)
                     conn.commit()
                     cur.close()
